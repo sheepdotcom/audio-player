@@ -4,18 +4,31 @@
 // Made for asym games, so sections of each song that you can easily loop (like bookmarks kinda)
 // Also thing for DoD, harken themes have calm, then transition, then enraged, would be nice to have a button to transition to enraged (and back)
 
+// plans:
+// bookmark sections
+// - you can select what sections will play, not play, loop
+// - probably gonna be the main feature of this lol
+// - very later - keybinds that do things with the sections, like you code it yourself or something? (imagine lua scripting hehe no way that is every happening lol)
+// oh and one library + (maybe) two binaries (one tui, one later could be gui :3)
+
 // Resources?
 // https://www.nerdfonts.com/cheat-sheet - Icon cheat sheet, useful for... well, finding icons to use for stuff
 
+use audio_player::{play_audio, setup_audio, AppState};
 use color_eyre::eyre::Result;
 use crossterm::event::{self, Event, KeyCode};
 use rand::Rng;
-use ratatui::{layout::{Alignment, Constraint, Layout, Margin, Rect}, style::{Color, Style, Stylize}, text::{Line, Span, Text}, widgets::{block::Title, Block, Borders, Paragraph, Sparkline, Wrap}, Frame};
+use ratatui::{layout::{Alignment, Constraint, Layout, Margin}, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, Borders, Paragraph, Sparkline, Wrap}, Frame};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
 
     let mut state = AppState::new();
+
+    // TODO: move these two little functions into AppState itself
+    setup_audio(&mut state)?;
+    play_audio(&mut state)?;
+
     let mut terminal = ratatui::init();
 
     loop {
@@ -26,6 +39,8 @@ fn main() -> Result<()> {
     }
 
     ratatui::restore();
+
+    // std::thread::sleep(std::time::Duration::from_secs(5));
 
     Ok(())
 }
@@ -70,12 +85,15 @@ fn draw_frame(frame: &mut Frame, state: &mut AppState) {
     // let song_info_block = Block::bordered()
     //     .title("Song Info");
 
-    let song_info_layout = Layout::vertical(vec![Min(2), Length(1), Length(3)]);
+    let song_info_layout = Layout::vertical(vec![Length(6), Length(1), Min(3)]);
     let [waveform_area, _, song_info_area] = song_info_layout.areas(right_area.inner(Margin::new(1, 1)));
     
     // yup custom block widget so i can have nice connecting horizontal line separator :3
     // dist_from_bottom should always be equal to the height of the song_info_area just update it whenever you update that ok?
-    let song_info_block = connected_block_widget("Song Info", right_area, 3);
+    // let song_info_block = connected_block_widget("Song Info", right_area, 6);
+
+    let song_info_block = Block::bordered()
+        .title("Song Info");
 
     // Sparklines will panic in debug if value is too high because of the line `*value * u64::from(spark_area.height) * 8 / max_height`
     // value * height * 8 = u64::MAX // max_height removed because overflow happens before it can even divide
@@ -104,7 +122,7 @@ fn draw_frame(frame: &mut Frame, state: &mut AppState) {
             Span::styled("audio visualizer", Style::new().gray()),
             Span::raw(", then the name, the bar™, and whatever else, like bookmarked looping points?"),
         ]),
-        Line::raw(format!("Sparkline height: {}, max sparkline height: {max_sparkline_height}", waveform_area.height)),
+    Line::raw(format!("Sparkline height: {}, max sparkline height: {max_sparkline_height}", waveform_area.height)),
     ]).wrap(Wrap { trim: false });
 
     frame.render_widget(title_block, title_area);
@@ -121,29 +139,29 @@ fn draw_frame(frame: &mut Frame, state: &mut AppState) {
 }
 
 // i aint makin a custom widget when i can cheap out with Text
-fn connected_block_widget<'a>(title: impl Into<Line<'a>>, area: Rect, dist_from_bottom: usize) -> Text<'a> {
-    let title: Line = title.into();
-    let width = area.width as usize;
-    let height = area.height as usize;
-
-    let mut lines = Vec::new();
-
-    lines.push(Line::raw(format!("┌{}{}┐", title, "─".repeat(width.saturating_sub(2 + title.width())))));
-
-    for _ in 0..height.saturating_sub(dist_from_bottom + 3) {
-        lines.push(Line::raw(format!("│{}│", " ".repeat(width.saturating_sub(2)))));
-    }
-
-    lines.push(Line::raw(format!("├{}┤", "─".repeat(width.saturating_sub(2)))));
-
-    for _ in 0..dist_from_bottom {
-        lines.push(Line::raw(format!("│{}│", " ".repeat(width.saturating_sub(2)))));
-    }
-
-    lines.push(Line::raw(format!("└{}┘", "─".repeat(width.saturating_sub(2)))));
-
-    Text::from(lines).style(Style::default().fg(Color::Gray))
-}
+// fn connected_block_widget<'a>(title: impl Into<Line<'a>>, area: Rect, dist_from_top: usize) -> Text<'a> {
+//     let title: Line = title.into();
+//     let width = area.width as usize;
+//     let height = area.height as usize;
+//
+//     let mut lines = Vec::new();
+//
+//     lines.push(Line::raw(format!("┌{}{}┐", title, "─".repeat(width.saturating_sub(2 + title.width())))));
+//
+//     for _ in 0..dist_from_top {
+//         lines.push(Line::raw(format!("│{}│", " ".repeat(width.saturating_sub(2)))));
+//     }
+//
+//     lines.push(Line::raw(format!("├{}┤", "─".repeat(width.saturating_sub(2)))));
+//
+//     for _ in 0..height.saturating_sub(dist_from_top + 3) {
+//         lines.push(Line::raw(format!("│{}│", " ".repeat(width.saturating_sub(2)))));
+//     }
+//
+//     lines.push(Line::raw(format!("└{}┘", "─".repeat(width.saturating_sub(2)))));
+//
+//     Text::from(lines).style(Style::default().fg(Color::Gray))
+// }
 
 /// blocks until we get events, because then we need to draw, i think?
 fn handle_events(state: &mut AppState) -> Result<()> {
@@ -154,10 +172,15 @@ fn handle_events(state: &mut AppState) -> Result<()> {
             match key.code {
                 KeyCode::Char(c) => match c {
                     'q' => state.exit = true, // TODO: when menus get added q wont just close the program
-                    'w' => {}, // just so lsp dont complain about 1 pattern
+                    'a' => {}, // just so lsp dont complain about 1 pattern
                     _ => {},
                 },
-                KeyCode::Enter => {}, // same here, anti-lsp complaint :3
+                KeyCode::Right => { // for testing currently so yeah TODO: change the way cursor works, i dont think we should be using the raw pcm cursor position here but temp code whatever
+                    let mut cursor_lock = state.cursor.lock()
+                        .unwrap_or_else(|err| err.into_inner());
+
+                    *cursor_lock += 1_920_000; // 48khz * 2 channels * 4 (since u8 is 4 times smaller than f32) * 5 seconds
+                },
                 _ => {},
             }
         },
@@ -167,16 +190,4 @@ fn handle_events(state: &mut AppState) -> Result<()> {
     }
 
     Ok(())
-}
-
-// TODO: move this somewhere idk no way this is staying in main.rs
-#[derive(Clone, Debug, Default)]
-struct AppState {
-    exit: bool,
-}
-
-impl AppState {
-    pub fn new() -> Self {
-        Self::default()
-    }
 }
